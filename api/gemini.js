@@ -125,23 +125,15 @@ export default async function handler(req, res) {
       maxOutputTokens: 512,
     };
 
-    // 既知の固定モデル名は変わりやすいので、未指定時は ListModels から選ぶ
-    let dynamicDefault = "";
-    try {
-      const models = await listModels({ apiKey });
-      dynamicDefault = pickDefaultModelName(models);
-    } catch {
-      dynamicDefault = "";
-    }
-
-    const candidates = requestedModel ? [requestedModel] : dynamicDefault ? [dynamicDefault] : [];
-    if (candidates.length === 0) {
-      return res.status(400).json({
-        error: "Missing model",
-        hint:
-          "モデル名が未指定です。設定でモデルを入力するか、/api/gemini?listModels=1 で利用可能モデル一覧を確認してください。",
-      });
-    }
+    // モデル名は -preview などが付く実名を使う（例: gemini-3-flash-preview）
+    // 未指定時は preview を優先し、だめなら lite-preview → 通常名へフォールバック
+    const DEFAULT_PRIMARY = "gemini-3-flash-preview";
+    const DEFAULT_LITE = "gemini-3-flash-lite-preview";
+    const FALLBACK_PRIMARY = "gemini-3-flash";
+    const FALLBACK_LITE = "gemini-3-flash-lite";
+    const candidates = requestedModel
+      ? [requestedModel, DEFAULT_PRIMARY, DEFAULT_LITE, FALLBACK_PRIMARY, FALLBACK_LITE].filter(Boolean)
+      : [DEFAULT_PRIMARY, DEFAULT_LITE, FALLBACK_PRIMARY, FALLBACK_LITE];
 
     async function attempt(model) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
@@ -245,7 +237,7 @@ export default async function handler(req, res) {
       return res.status(404).json({
         error: "Gemini model not found",
         hint:
-          "指定モデルが v1beta generateContent で見つかりません。/api/gemini?listModels=1 で利用可能なモデル名を確認して、設定のモデルに貼り付けてください（末尾に -preview などが付く場合があります）。",
+          "指定モデルが v1beta generateContent で見つかりません。モデル名は gemini-3-flash-preview のように -preview が付く場合があります。/api/gemini?listModels=1 で利用可能なモデル名を確認して、設定のモデルに貼り付けてください。",
         modelTried: lastError?.model ?? null,
         models: models ? models.map((m) => m.name.replace(/^models\//, "")).slice(0, 60) : null,
         detailsJson: lastError?.json ?? null,

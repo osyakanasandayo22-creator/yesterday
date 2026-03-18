@@ -10,7 +10,7 @@ const DEFAULT_PERSONA = `あなたは「1年前の私」です。
 
 const DEFAULT_SETTINGS = {
   provider: "gemini", // "mock" | "gemini"
-  model: "gemini-3-flash",
+  model: "gemini-3-flash-preview",
   persona: DEFAULT_PERSONA,
   // どのスナップショット（過去の自分）を相手にするか。未指定=最新。
   activeSnapshotId: "latest",
@@ -116,6 +116,10 @@ function createState() {
   // 以前のモデル名（例: gemini-2.0-...）が残っている場合はデフォルトに戻す
   // ※UIが「戻ってない」ように見えるのは localStorage の値が優先されているため
   if (typeof state.settings.model === "string" && /^gemini-2\.0-/i.test(state.settings.model.trim())) {
+    state.settings.model = DEFAULT_SETTINGS.model;
+  }
+  // previewに寄せたいので、旧デフォルト gemini-3-flash も preview に寄せる
+  if (typeof state.settings.model === "string" && state.settings.model.trim() === "gemini-3-flash") {
     state.settings.model = DEFAULT_SETTINGS.model;
   }
   if (!state.settings.model) state.settings.model = DEFAULT_SETTINGS.model;

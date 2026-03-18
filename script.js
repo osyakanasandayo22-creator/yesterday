@@ -9,7 +9,7 @@ const DEFAULT_PERSONA = `あなたは「1年前の私」です。
 
 const DEFAULT_SETTINGS = {
   provider: "gemini", // "mock" | "gemini"
-  model: "gemini-2.0-flash",
+  model: "gemini-3-flash-preview",
   persona: DEFAULT_PERSONA,
 };
 
@@ -192,7 +192,8 @@ async function callGeminiViaServer({ model, persona, messages }) {
         ? "Vercel環境変数に GEMINI_API_KEY を設定してください。"
         : "");
     const base = data?.error || `Gemini API error (${resp.status} ${resp.statusText})`;
-    throw new Error(`${base}${hint ? `\n${hint}` : ""}`);
+    const details = data?.details ? `\n\n--- upstream details ---\n${String(data.details).slice(0, 1200)}` : "";
+    throw new Error(`${base}${hint ? `\n${hint}` : ""}${details}`);
   }
 
   const text = data?.text || "";

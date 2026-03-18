@@ -122,7 +122,8 @@ export default async function handler(req, res) {
 
     const generationConfig = {
       temperature: 0.7,
-      maxOutputTokens: 512,
+      // 512だと返答が途中で途切れやすいので余裕を持たせる
+      maxOutputTokens: 1024,
     };
 
     // モデル名は -preview などが付く実名を使う（例: gemini-3-flash-preview）
@@ -197,13 +198,14 @@ export default async function handler(req, res) {
           ?.map((p) => p?.text)
           .filter(Boolean)
           .join("") ?? "";
+      const finishReason = data?.candidates?.[0]?.finishReason || null;
 
       if (!text) {
         lastError = { model, status: 200, statusText: "OK", contentType: r.contentType, raw: r.raw, json: r.json };
         continue;
       }
 
-      return res.status(200).json({ text, modelUsed: model });
+      return res.status(200).json({ text, modelUsed: model, finishReason });
     }
 
     // 429はクォータ/レート制限なので、クライアントに分かりやすく返す

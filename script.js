@@ -407,7 +407,8 @@ async function callGeminiViaServer({ model, persona, messages }) {
   const text = data?.text || "";
   if (!text) throw new Error("Geminiの返答が空でした（モデル名を確認）");
   const used = data?.modelUsed ? `\n\n（model: ${data.modelUsed}）` : "";
-  return text + used;
+  const finish = data?.finishReason ? ` / finish: ${data.finishReason}` : "";
+  return text + used + (used ? finish : finish ? `\n\n（${finish.trim().replace(/^\//, "").trim()}）` : "");
 }
 
 async function generateReply(state) {

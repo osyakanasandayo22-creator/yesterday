@@ -113,6 +113,13 @@ function createState() {
   // 以前の版で保存されていたapiKeyは使わない（サーバー側envで保護する）
   if ("apiKey" in state.settings) delete state.settings.apiKey;
   state.settings.persona = sanitizeText(state.settings.persona || DEFAULT_PERSONA);
+  // 以前のモデル名（例: gemini-2.0-...）が残っている場合はデフォルトに戻す
+  // ※UIが「戻ってない」ように見えるのは localStorage の値が優先されているため
+  if (typeof state.settings.model === "string" && /^gemini-2\.0-/i.test(state.settings.model.trim())) {
+    state.settings.model = DEFAULT_SETTINGS.model;
+  }
+  if (!state.settings.model) state.settings.model = DEFAULT_SETTINGS.model;
+  if (!state.settings.activeSnapshotId) state.settings.activeSnapshotId = "latest";
   if (!state.profile) state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
   if (!Array.isArray(state.snapshots)) state.snapshots = [];
   ensureFirstBotGreeting(state);

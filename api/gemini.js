@@ -55,10 +55,11 @@ export default async function handler(req, res) {
     };
 
     const DEFAULT_PRIMARY = "gemini-3-flash";
-    const DEFAULT_FALLBACK = "gemini-3.1-flash-lite";
+    const DEFAULT_FALLBACK = "gemini-3.1-flash";
+    const DEFAULT_FALLBACK_LITE = "gemini-3.1-flash-lite";
     const candidates = requestedModel
-      ? [requestedModel, DEFAULT_PRIMARY, DEFAULT_FALLBACK].filter(Boolean)
-      : [DEFAULT_PRIMARY, DEFAULT_FALLBACK];
+      ? [requestedModel, DEFAULT_PRIMARY, DEFAULT_FALLBACK, DEFAULT_FALLBACK_LITE].filter(Boolean)
+      : [DEFAULT_PRIMARY, DEFAULT_FALLBACK, DEFAULT_FALLBACK_LITE];
 
     async function attempt(model) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;

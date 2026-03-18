@@ -218,7 +218,7 @@ export default async function handler(req, res) {
       return res.status(429).json({
         error: "Gemini quota/rate limit exceeded",
         hint:
-          "Gemini APIの無料枠クォータ/レート制限により拒否されました。時間を置いて再試行するか、Google AI Studio側で請求/プラン/クォータ設定を確認してください。",
+          "Gemini APIのクォータ/レート制限により拒否されました。無料枠の「回数」だけでなく、リクエスト/分(RPM)やトークン/分(TPM)でも429になることがあります。時間を置いて再試行するか、Google AI Studio側で請求/プラン/クォータ設定を確認してください。",
         retryAfterSeconds: wait ? Number(wait) : null,
         status: lastError?.status ?? null,
         statusText: lastError?.statusText ?? null,

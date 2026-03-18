@@ -344,6 +344,41 @@ function structuredCloneSafe(obj) {
   return JSON.parse(JSON.stringify(obj ?? null));
 }
 
+function clampTextLen(text, maxChars) {
+  const s = sanitizeText(text);
+  if (!maxChars || maxChars <= 0) return "";
+  if (s.length <= maxChars) return s;
+  return s.slice(0, Math.max(0, maxChars - 1)) + "…";
+}
+
+function summarizeProfileForPrompt(profile) {
+  const p = profile && typeof profile === "object" ? profile : null;
+  if (!p) return null;
+  const tone = p.tone && typeof p.tone === "object" ? p.tone : {};
+  const empathyStyle = p.empathyStyle && typeof p.empathyStyle === "object" ? p.empathyStyle : {};
+  const endingSamples = Array.isArray(tone.endingSamples) ? tone.endingSamples.slice(0, 6) : [];
+  const frequentWords = Array.isArray(tone.frequentWords) ? tone.frequentWords.slice(0, 10) : [];
+  return {
+    version: p.version ?? null,
+    updatedAt: p.updatedAt ?? null,
+    tone: {
+      politeness: typeof tone.politeness === "number" ? Number(tone.politeness) : null,
+      assertiveness: typeof tone.assertiveness === "number" ? Number(tone.assertiveness) : null,
+      newlineRate: typeof tone.newlineRate === "number" ? Number(tone.newlineRate) : null,
+      emojiRate: typeof tone.emojiRate === "number" ? Number(tone.emojiRate) : null,
+      endingSamples,
+      frequentWords,
+    },
+    empathyStyle: {
+      pattern: typeof empathyStyle.pattern === "string" ? empathyStyle.pattern : null,
+    },
+    values: Array.isArray(p.values) ? p.values.slice(0, 8) : [],
+    taboos: Array.isArray(p.taboos) ? p.taboos.slice(0, 8) : [],
+    catchphrases: Array.isArray(p.catchphrases) ? p.catchphrases.slice(0, 10) : [],
+    confidence: typeof p.confidence === "number" ? Number(p.confidence) : null,
+  };
+}
+
 function countUserTurns(messages) {
   let n = 0;
   for (const m of messages) if (m?.role === "user") n++;
@@ -445,9 +480,13 @@ function getActiveSnapshot(state) {
 
 function buildPersonaWithProfile(basePersona, snapshot) {
   const prof = snapshot?.profile || null;
-  const header = basePersona ? String(basePersona).trim() : "";
-  const profileBlock = prof
-    ? `\n\n---\n参考情報（ログから推定した私の像 / 補助）:\nsnapshot:\n- turn: ${snapshot.turnIndex}\n- time: ${fmtTime(snapshot.ts)}\n\nprofile(json):\n${JSON.stringify(prof, null, 2)}\n\n使い方:\n- このprofileは補助。矛盾したら「直近の私の発言」と「会話ログ」を優先する\n- 口調（語尾/改行/断定度/質問頻度）はこのprofileに強く寄せる\n- 返答にprofileやルール文を引用しない（自然な会話文だけにする）`
+  // Geminiのクォータは「回数」だけでなく「トークン/分」などでも詰まりやすいので、
+  // persona/profileは毎回“短く圧縮して”送る（長文化で429になりやすい）。
+  const header = clampTextLen(basePersona ? String(basePersona).trim() : "", 6000);
+  const summarized = summarizeProfileForPrompt(prof);
+  const summarizedJson = summarized ? clampTextLen(JSON.stringify(summarized, null, 2), 1800) : "";
+  const profileBlock = summarizedJson
+    ? `\n\n---\n参考情報（ログから推定した私の像 / 補助・圧縮版）:\nsnapshot:\n- turn: ${snapshot.turnIndex}\n- time: ${fmtTime(snapshot.ts)}\n\nprofile(json, compact):\n${summarizedJson}\n\n使い方:\n- このprofileは補助。矛盾したら「直近の私の発言」と「会話ログ」を優先する\n- 口調（語尾/改行/断定度/質問頻度）はこのprofileに強く寄せる\n- 返答にprofileやルール文を引用しない（自然な会話文だけにする）`
     : "";
   return (header + profileBlock).trim();
 }

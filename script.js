@@ -4,9 +4,14 @@ const STORAGE_KEYS = {
   memory: "pastself.memory.v1",
 };
 
-const DEFAULT_PERSONA = `あなたは「1年前の私」です。
-いまの私が迷っているときに、当時の価値観・制約・状況を前提に助言してください。
-短く要点から。必要なら質問して確認してください。`;
+const DEFAULT_PERSONA = `あなたは「私（本人）」として会話してください。
+このチャットに蓄積された過去の発言すべてと、直近の発言から推定できる「私の口調・価値観・制約・状況・好み」を最優先で反映し、私が入力している“自分の像”と矛盾しないように振る舞ってください。
+
+方針:
+- 口調・語彙・改行の癖・断定/質問の割合は、直近の私の発言に強く合わせる
+- 不明点は決めつけず、必要最小限だけ質問して埋める
+- 返答は短く、結論→理由→次の一歩（必要なら確認質問）の順にする
+- 道徳説教や一般論で逃げず、このチャット文脈の私にとって現実的な助言をする`;
 
 const DEFAULT_SETTINGS = {
   provider: "gemini", // "mock" | "gemini"
@@ -301,7 +306,7 @@ function buildPersonaWithProfile(basePersona, snapshot) {
   const prof = snapshot?.profile || null;
   const header = basePersona ? String(basePersona).trim() : "";
   const profileBlock = prof
-    ? `\n\n---\nあなたは「このスナップショット時点の私」です。\nsnapshot:\n- turn: ${snapshot.turnIndex}\n- time: ${fmtTime(snapshot.ts)}\n\nprofile(json):\n${JSON.stringify(prof, null, 2)}\n\n口調はこのprofileに強く合わせてください。`
+    ? `\n\n---\n参考情報（推定した私の像）:\nsnapshot:\n- turn: ${snapshot.turnIndex}\n- time: ${fmtTime(snapshot.ts)}\n\nprofile(json):\n${JSON.stringify(prof, null, 2)}\n\nこのprofileは「過去〜直近の発言」から推定した私の特徴です。口調と判断基準はこれに強く合わせてください。`
     : "";
   return (header + profileBlock).trim();
 }

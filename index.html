@@ -22,8 +22,8 @@
 
       <main class="main">
         <section class="hero" id="hero">
-          <div class="logo" aria-hidden="true">Past</div>
-          <h1 class="title">過去の自分に聞く</h1>
+          <div class="logo" aria-hidden="true">Self</div>
+          <h1 class="title">自分に聞く</h1>
           <p class="subtitle">最小プロトタイプ：ログ保存＋疑似応答（あとでGeminiに差し替え可）</p>
         </section>
 
@@ -37,7 +37,7 @@
                 name="prompt"
                 type="text"
                 inputmode="text"
-                placeholder="過去の自分に質問…"
+                placeholder="自分に質問…"
                 aria-label="メッセージ"
               />
               <button id="sendButton" class="composer__send" type="submit">送信</button>
@@ -63,12 +63,12 @@
 
         <div class="dialog__body">
           <label class="field">
-            <span class="field__label">人格（過去の自分）の指示</span>
+            <span class="field__label">人格（自分像）の指示</span>
             <textarea
               id="personaInput"
               class="field__textarea"
               rows="6"
-              placeholder="例）あなたは1年前の私。いまの私に厳しめに助言して…"
+              placeholder="例）このチャットの発言から推定される私として、短く要点で助言して…"
             ></textarea>
           </label>
 
@@ -76,7 +76,7 @@
             <span class="field__label">話す相手（自分のスナップショット）</span>
             <select id="snapshotSelect" class="field__select"></select>
             <span class="field__help">
-              会話するほど「自分プロファイル」を更新し、毎ターン保存します。ここで選んだ時点の“自分”として返答します。
+              会話するほど「自分プロファイル」を更新し、毎ターン保存します。ここで選んだ時点の“自分像”に寄せて返答します。
             </span>
           </label>
 

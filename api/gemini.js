@@ -28,13 +28,9 @@ export default async function handler(req, res) {
 
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const model = String(body?.model || "gemini-2.0-flash").trim();
+    const requestedModel = String(body?.model || "").trim();
     const persona = String(body?.persona || "").trim();
     const messages = Array.isArray(body?.messages) ? body.messages : [];
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-      model
-    )}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
     const contents = [];
     if (persona) {
@@ -53,19 +49,28 @@ export default async function handler(req, res) {
       });
     }
 
-    const upstream = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents,
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 512,
-        },
-      }),
-    });
+    const generationConfig = {
+      temperature: 0.7,
+      maxOutputTokens: 512,
+    };
 
-    if (!upstream.ok) {
+    const DEFAULT_PRIMARY = "gemini-3-flash";
+    const DEFAULT_FALLBACK = "gemini-3.1-flash-lite";
+    const candidates = requestedModel
+      ? [requestedModel, DEFAULT_PRIMARY, DEFAULT_FALLBACK].filter(Boolean)
+      : [DEFAULT_PRIMARY, DEFAULT_FALLBACK];
+
+    async function attempt(model) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+      const upstream = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({ contents, generationConfig }),
+      });
+
       const ct = upstream.headers.get("content-type") || "";
       const raw = await upstream.text().catch(() => "");
       let parsed = null;
@@ -76,28 +81,67 @@ export default async function handler(req, res) {
           parsed = null;
         }
       }
-      return res.status(502).json({
-        error: "Gemini upstream error",
+
+      return {
+        ok: upstream.ok,
         status: upstream.status,
         statusText: upstream.statusText,
         contentType: ct || null,
-        details: raw || null,
-        detailsJson: parsed,
-      });
+        raw: raw || null,
+        json: parsed,
+      };
     }
 
-    const data = await upstream.json();
-    const text =
-      data?.candidates?.[0]?.content?.parts
-        ?.map((p) => p?.text)
-        .filter(Boolean)
-        .join("") ?? "";
-
-    if (!text) {
-      return res.status(502).json({ error: "Empty response from Gemini" });
+    function shouldFallback(result) {
+      if (result.ok) return false;
+      if (result.status === 429) return true; // rate limit / quota
+      if (result.status === 404) return true; // model not found / deprecated
+      if (result.status === 403) return true; // often quota / permission (try fallback)
+      // some 400s indicate bad model name
+      const msg =
+        result?.json?.error?.message ||
+        result?.json?.message ||
+        (typeof result.raw === "string" ? result.raw : "");
+      if (/model/i.test(String(msg)) && /(not found|unknown|invalid)/i.test(String(msg))) return true;
+      return false;
     }
 
-    return res.status(200).json({ text });
+    let lastError = null;
+    for (const model of candidates) {
+      const r = await attempt(model);
+      if (!r.ok) {
+        lastError = { model, ...r };
+        if (shouldFallback(r)) continue;
+        break;
+      }
+
+      const data = r.json ?? (r.raw ? JSON.parse(r.raw) : null);
+      const text =
+        data?.candidates?.[0]?.content?.parts
+          ?.map((p) => p?.text)
+          .filter(Boolean)
+          .join("") ?? "";
+
+      if (!text) {
+        lastError = { model, status: 200, statusText: "OK", contentType: r.contentType, raw: r.raw, json: r.json };
+        continue;
+      }
+
+      return res.status(200).json({ text, modelUsed: model });
+    }
+
+    return res.status(502).json({
+      error: "Gemini upstream error",
+      status: lastError?.status ?? null,
+      statusText: lastError?.statusText ?? null,
+      modelTried: lastError?.model ?? null,
+      contentType: lastError?.contentType ?? null,
+      details: lastError?.raw ?? null,
+      detailsJson: lastError?.json ?? null,
+    });
+
+    // (unreachable)
+    // return res.status(500).json({ error: "Unexpected state" });
   } catch (err) {
     return res.status(400).json({ error: err?.message || String(err) });
   }

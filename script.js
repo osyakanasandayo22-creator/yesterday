@@ -9,7 +9,7 @@ const DEFAULT_PERSONA = `あなたは「1年前の私」です。
 
 const DEFAULT_SETTINGS = {
   provider: "gemini", // "mock" | "gemini"
-  model: "gemini-3-flash-preview",
+  model: "gemini-3-flash",
   persona: DEFAULT_PERSONA,
 };
 
@@ -207,7 +207,8 @@ async function callGeminiViaServer({ model, persona, messages }) {
 
   const text = data?.text || "";
   if (!text) throw new Error("Geminiの返答が空でした（モデル名を確認）");
-  return text;
+  const used = data?.modelUsed ? `\n\n（model: ${data.modelUsed}）` : "";
+  return text + used;
 }
 
 async function generateReply(state) {

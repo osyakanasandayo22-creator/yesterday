@@ -192,8 +192,17 @@ async function callGeminiViaServer({ model, persona, messages }) {
         ? "Vercel環境変数に GEMINI_API_KEY を設定してください。"
         : "");
     const base = data?.error || `Gemini API error (${resp.status} ${resp.statusText})`;
-    const details = data?.details ? `\n\n--- upstream details ---\n${String(data.details).slice(0, 1200)}` : "";
-    throw new Error(`${base}${hint ? `\n${hint}` : ""}${details}`);
+    const statusLine =
+      typeof data?.status === "number" || typeof data?.statusText === "string"
+        ? `\n(upstream: ${data?.status ?? "?"} ${data?.statusText ?? ""})`
+        : "";
+    const detailsText = data?.details ? String(data.details).slice(0, 2000) : "";
+    const detailsJson = data?.detailsJson ? JSON.stringify(data.detailsJson, null, 2).slice(0, 2000) : "";
+    const detailsBlock =
+      detailsText || detailsJson
+        ? `\n\n--- upstream details ---\n${detailsJson || detailsText}`
+        : "";
+    throw new Error(`${base}${statusLine}${hint ? `\n${hint}` : ""}${detailsBlock}`);
   }
 
   const text = data?.text || "";

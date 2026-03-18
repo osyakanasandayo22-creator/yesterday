@@ -66,12 +66,23 @@ export default async function handler(req, res) {
     });
 
     if (!upstream.ok) {
-      const t = await upstream.text().catch(() => "");
+      const ct = upstream.headers.get("content-type") || "";
+      const raw = await upstream.text().catch(() => "");
+      let parsed = null;
+      if (ct.includes("application/json") && raw) {
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          parsed = null;
+        }
+      }
       return res.status(502).json({
         error: "Gemini upstream error",
         status: upstream.status,
         statusText: upstream.statusText,
-        details: t,
+        contentType: ct || null,
+        details: raw || null,
+        detailsJson: parsed,
       });
     }
 

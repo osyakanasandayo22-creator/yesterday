@@ -10,7 +10,7 @@ const DEFAULT_PERSONA = `あなたは「1年前の私」です。
 
 const DEFAULT_SETTINGS = {
   provider: "gemini", // "mock" | "gemini"
-  model: "gemini-3-flash",
+  model: "gemini-2.0-flash",
   persona: DEFAULT_PERSONA,
   // どのスナップショット（過去の自分）を相手にするか。未指定=最新。
   activeSnapshotId: "latest",

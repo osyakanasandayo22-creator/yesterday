@@ -491,6 +491,14 @@ function wireUI(state) {
         return;
       }
 
+      // まず利用可能モデル一覧を取得（-preview など実在名を確認できる）
+      const listResp = await fetch("/api/gemini?listModels=1");
+      const listCt = listResp.headers.get("content-type") || "";
+      const listData = listCt.includes("application/json") ? await listResp.json().catch(() => ({})) : {};
+      const modelHints = Array.isArray(listData?.models)
+        ? listData.models.map((m) => String(m?.name || "").replace(/^models\//, "")).filter(Boolean)
+        : [];
+
       const text = await callGeminiViaServer({
         model,
         persona,
@@ -498,7 +506,8 @@ function wireUI(state) {
           { id: uid(), role: "user", text: "接続テストです。短く自己紹介して。", ts: now() },
         ],
       });
-      testResult.textContent = `OK（返答あり）: ${text.slice(0, 60)}${text.length > 60 ? "…" : ""}`;
+      const hintLine = modelHints.length ? ` / models例: ${modelHints.slice(0, 3).join(", ")}${modelHints.length > 3 ? ", …" : ""}` : "";
+      testResult.textContent = `OK（返答あり）: ${text.slice(0, 60)}${text.length > 60 ? "…" : ""}${hintLine}`;
     } catch (err) {
       testResult.textContent = `NG: ${err?.message || String(err)}`;
     }

@@ -1,5 +1,76 @@
+async function listModels({ apiKey }) {
+  // v1beta ListModels
+  const url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200";
+  const upstream = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+  });
+  const ct = upstream.headers.get("content-type") || "";
+  const raw = await upstream.text().catch(() => "");
+  let json = null;
+  if (ct.includes("application/json") && raw) {
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      json = null;
+    }
+  }
+  if (!upstream.ok) {
+    const msg = json?.error?.message || json?.message || raw || `${upstream.status} ${upstream.statusText}`;
+    throw new Error(msg);
+  }
+  const models = Array.isArray(json?.models) ? json.models : [];
+  // generateContent対応だけ返す
+  return models
+    .filter((m) => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent"))
+    .map((m) => ({
+      name: m.name, // "models/..."
+      displayName: m.displayName || null,
+      description: m.description || null,
+      methods: m.supportedGenerationMethods || [],
+    }));
+}
+
+function pickDefaultModelName(list) {
+  // "models/xxx" → "xxx"
+  const names = list.map((m) => String(m?.name || "")).filter(Boolean);
+  const short = names.map((n) => n.replace(/^models\//, ""));
+  // 好み順（存在すればそれを使う）
+  const preferPatterns = [
+    /^gemini-1\.5-flash(-.*)?$/i,
+    /^gemini-1\.5-pro(-.*)?$/i,
+    /^gemini-2\.0-flash(-.*)?$/i,
+    /^gemini-2\.0-pro(-.*)?$/i,
+    /flash/i,
+  ];
+  for (const pat of preferPatterns) {
+    const hit = short.find((s) => pat.test(s));
+    if (hit) return hit;
+  }
+  return short[0] || "";
+}
+
 export default async function handler(req, res) {
   if (req.method === "GET") {
+    // ListModels: /api/gemini?listModels=1
+    if (String(req.query?.listModels || "") === "1") {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({
+          error: "Missing GEMINI_API_KEY",
+          hint: "Vercelの環境変数に GEMINI_API_KEY を設定してください。",
+        });
+      }
+      try {
+        const models = await listModels({ apiKey });
+        return res.status(200).json({ ok: true, models });
+      } catch (err) {
+        return res.status(502).json({ error: "ListModels failed", details: err?.message || String(err) });
+      }
+    }
     return res.status(200).json({
       ok: true,
       hasGeminiApiKey: !!process.env.GEMINI_API_KEY,
@@ -54,11 +125,23 @@ export default async function handler(req, res) {
       maxOutputTokens: 512,
     };
 
-    const DEFAULT_PRIMARY = "gemini-3-flash";
-    const DEFAULT_FALLBACK = "gemini-3.1-flash-lite";
-    const candidates = requestedModel
-      ? [requestedModel, DEFAULT_PRIMARY, DEFAULT_FALLBACK].filter(Boolean)
-      : [DEFAULT_PRIMARY, DEFAULT_FALLBACK];
+    // 既知の固定モデル名は変わりやすいので、未指定時は ListModels から選ぶ
+    let dynamicDefault = "";
+    try {
+      const models = await listModels({ apiKey });
+      dynamicDefault = pickDefaultModelName(models);
+    } catch {
+      dynamicDefault = "";
+    }
+
+    const candidates = requestedModel ? [requestedModel] : dynamicDefault ? [dynamicDefault] : [];
+    if (candidates.length === 0) {
+      return res.status(400).json({
+        error: "Missing model",
+        hint:
+          "モデル名が未指定です。設定でモデルを入力するか、/api/gemini?listModels=1 で利用可能モデル一覧を確認してください。",
+      });
+    }
 
     async function attempt(model) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
@@ -147,6 +230,24 @@ export default async function handler(req, res) {
         statusText: lastError?.statusText ?? null,
         modelTried: lastError?.model ?? null,
         details: lastError?.raw ?? null,
+        detailsJson: lastError?.json ?? null,
+      });
+    }
+
+    // 404はモデル名が存在しない可能性が高いので、候補を返す
+    if (lastError?.status === 404) {
+      let models = null;
+      try {
+        models = await listModels({ apiKey });
+      } catch {
+        models = null;
+      }
+      return res.status(404).json({
+        error: "Gemini model not found",
+        hint:
+          "指定モデルが v1beta generateContent で見つかりません。/api/gemini?listModels=1 で利用可能なモデル名を確認して、設定のモデルに貼り付けてください（末尾に -preview などが付く場合があります）。",
+        modelTried: lastError?.model ?? null,
+        models: models ? models.map((m) => m.name.replace(/^models\//, "")).slice(0, 60) : null,
         detailsJson: lastError?.json ?? null,
       });
     }

@@ -96,7 +96,8 @@ export default async function handler(req, res) {
 
     function shouldFallback(result) {
       if (result.ok) return false;
-      if (result.status === 429) return true; // rate limit / quota
+      // 429(クォータ/レート制限)はモデルを変えても解決しないことが多いのでフォールバックしない
+      if (result.status === 429) return false;
       if (result.status === 404) return true; // model not found / deprecated
       if (result.status === 403) return true; // often quota / permission (try fallback)
       // some 400s indicate bad model name
@@ -130,6 +131,26 @@ export default async function handler(req, res) {
       }
 
       return res.status(200).json({ text, modelUsed: model });
+    }
+
+    // 429はクォータ/レート制限なので、クライアントに分かりやすく返す
+    if (lastError?.status === 429) {
+      const msg =
+        lastError?.json?.error?.message ||
+        lastError?.json?.message ||
+        (typeof lastError?.raw === "string" ? lastError.raw : "");
+      const wait = String(msg).match(/Please retry in\s+([0-9.]+)s/i)?.[1] || null;
+      return res.status(429).json({
+        error: "Gemini quota/rate limit exceeded",
+        hint:
+          "Gemini APIの無料枠クォータ/レート制限により拒否されました。時間を置いて再試行するか、Google AI Studio側で請求/プラン/クォータ設定を確認してください。",
+        retryAfterSeconds: wait ? Number(wait) : null,
+        status: lastError?.status ?? null,
+        statusText: lastError?.statusText ?? null,
+        modelTried: lastError?.model ?? null,
+        details: lastError?.raw ?? null,
+        detailsJson: lastError?.json ?? null,
+      });
     }
 
     return res.status(502).json({

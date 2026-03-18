@@ -54,10 +54,8 @@ export default async function handler(req, res) {
       maxOutputTokens: 512,
     };
 
-    // v1beta generateContent で安定して使えるモデル名に寄せる
-    // （古い/存在しないモデル名だと 404 になる）
-    const DEFAULT_PRIMARY = "gemini-2.0-flash";
-    const DEFAULT_FALLBACK = "gemini-2.0-flash-lite";
+    const DEFAULT_PRIMARY = "gemini-3-flash";
+    const DEFAULT_FALLBACK = "gemini-3.1-flash-lite";
     const candidates = requestedModel
       ? [requestedModel, DEFAULT_PRIMARY, DEFAULT_FALLBACK].filter(Boolean)
       : [DEFAULT_PRIMARY, DEFAULT_FALLBACK];

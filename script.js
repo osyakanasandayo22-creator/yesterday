@@ -10,7 +10,7 @@ const DEFAULT_PERSONA = `あなたは「1年前の私」です。
 
 const DEFAULT_SETTINGS = {
   provider: "gemini", // "mock" | "gemini"
-  model: "gemini-2.0-flash",
+  model: "gemini-3-flash",
   persona: DEFAULT_PERSONA,
   // どのスナップショット（過去の自分）を相手にするか。未指定=最新。
   activeSnapshotId: "latest",
@@ -343,6 +343,32 @@ async function callGeminiViaServer({ model, persona, messages }) {
   const ct = resp.headers.get("content-type") || "";
   const data = ct.includes("application/json") ? await resp.json().catch(() => ({})) : {};
   if (!resp.ok) {
+    // 429は「待てば回復」するケースが多いので、クライアント側で1回だけ自動リトライする
+    if (resp.status === 429) {
+      const retryAfterSeconds =
+        typeof data?.retryAfterSeconds === "number" && Number.isFinite(data.retryAfterSeconds) ? data.retryAfterSeconds : null;
+      const waitSec = retryAfterSeconds ? Math.min(Math.max(1, retryAfterSeconds), 60) : 15;
+      // サーバ側で待つとタイムアウトしやすいので、ここで待つ
+      await new Promise((r) => setTimeout(r, Math.round(waitSec * 1000)));
+      // 2回目（これ以上はループしない）
+      const resp2 = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, persona, messages }),
+      });
+      const ct2 = resp2.headers.get("content-type") || "";
+      const data2 = ct2.includes("application/json") ? await resp2.json().catch(() => ({})) : {};
+      if (!resp2.ok) {
+        const base2 = data2?.error || `Gemini API error (${resp2.status} ${resp2.statusText})`;
+        const hint2 = data2?.hint || "";
+        throw new Error(`${base2}${hint2 ? `\n${hint2}` : ""}`);
+      }
+      const text2 = data2?.text || "";
+      if (!text2) throw new Error("Geminiの返答が空でした（モデル名を確認）");
+      const used2 = data2?.modelUsed ? `\n\n（model: ${data2.modelUsed}）` : "";
+      return text2 + used2;
+    }
+
     const hint =
       data?.hint ||
       (data?.error === "Missing GEMINI_API_KEY"

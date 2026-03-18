@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Past Self Chat</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="page" id="page">
+      <header class="topbar">
+        <div class="topbar__left">
+          <button class="link" id="btnNewChat" type="button" aria-label="新規チャット">新規</button>
+          <button class="link" id="btnClearChat" type="button" aria-label="このチャットを消去">消去</button>
+        </div>
+        <div class="topbar__right">
+          <button class="link" id="btnSettings" type="button" aria-haspopup="dialog" aria-controls="settingsDialog">
+            設定
+          </button>
+        </div>
+      </header>
+
+      <main class="main">
+        <section class="hero" id="hero">
+          <div class="logo" aria-hidden="true">Past</div>
+          <h1 class="title">過去の自分に聞く</h1>
+          <p class="subtitle">最小プロトタイプ：ログ保存＋疑似応答（あとでGeminiに差し替え可）</p>
+        </section>
+
+        <section class="chat" id="chat" aria-live="polite" aria-label="チャット">
+          <div class="messages" id="messages"></div>
+          <div class="composer">
+            <form id="composerForm" class="composer__form" autocomplete="off">
+              <input
+                id="promptInput"
+                class="composer__input"
+                name="prompt"
+                type="text"
+                inputmode="text"
+                placeholder="過去の自分に質問…"
+                aria-label="メッセージ"
+              />
+              <button id="sendButton" class="composer__send" type="submit">送信</button>
+            </form>
+            <div class="composer__hint" id="hint">
+              Enterで送信 / Shift+Enterは未対応（最小版）
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span class="footer__text">ローカル保存: このPCのブラウザに保存されます</span>
+      </footer>
+    </div>
+
+    <dialog class="dialog" id="settingsDialog" aria-label="設定">
+      <form method="dialog" class="dialog__card" id="settingsForm">
+        <div class="dialog__header">
+          <h2 class="dialog__title">設定</h2>
+          <button class="iconbtn" type="button" id="btnCloseSettings" aria-label="閉じる">×</button>
+        </div>
+
+        <div class="dialog__body">
+          <label class="field">
+            <span class="field__label">人格（過去の自分）の指示</span>
+            <textarea
+              id="personaInput"
+              class="field__textarea"
+              rows="6"
+              placeholder="例）あなたは1年前の私。いまの私に厳しめに助言して…"
+            ></textarea>
+          </label>
+
+          <div class="grid2">
+            <label class="field">
+              <span class="field__label">Geminiを使う（任意）</span>
+              <select id="providerSelect" class="field__select">
+                <option value="mock">まずは疑似応答（おすすめ）</option>
+                <option value="gemini">Gemini API（キーが必要）</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span class="field__label">モデル</span>
+              <input id="modelInput" class="field__input" type="text" placeholder="例）gemini-2.0-flash" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="field__label">APIキー（ブラウザ保存・注意）</span>
+            <input id="apiKeyInput" class="field__input" type="password" placeholder="貼り付け（後で消せます）" />
+            <span class="field__help">
+              注意：この構成は<strong>フロントのみ</strong>なので、APIキーを入れるとブラウザ（localStorage）に保存されます。
+              本番はサーバー経由推奨です。
+            </span>
+          </label>
+
+          <div class="row">
+            <button class="btn" id="btnTest" type="button">接続テスト</button>
+            <span class="muted" id="testResult" role="status" aria-live="polite"></span>
+          </div>
+
+          <hr class="sep" />
+
+          <div class="row">
+            <button class="btn btn--ghost" id="btnExport" type="button">チャットを書き出し</button>
+            <button class="btn btn--ghost" id="btnImport" type="button">チャットを読み込み</button>
+            <input id="importFile" type="file" accept="application/json" hidden />
+          </div>
+        </div>
+
+        <div class="dialog__footer">
+          <button class="btn btn--ghost" value="cancel" type="button" id="btnCancel">キャンセル</button>
+          <button class="btn" value="default" type="submit" id="btnSave">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

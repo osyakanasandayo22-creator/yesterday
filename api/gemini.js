@@ -9,6 +9,11 @@ export default async function handler(req, res) {
     return res.status(500).json({
       error: "Missing GEMINI_API_KEY",
       hint: "Vercelの環境変数に GEMINI_API_KEY を設定してください。",
+      debug: {
+        nodeEnv: process.env.NODE_ENV || null,
+        vercelEnv: process.env.VERCEL_ENV || null,
+        vercelUrl: process.env.VERCEL_URL || null,
+      },
     });
   }
 

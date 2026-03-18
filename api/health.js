@@ -4,6 +4,8 @@ export default function handler(req, res) {
     ok: true,
     hasGeminiApiKey: hasKey,
     nodeEnv: process.env.NODE_ENV || null,
+    vercelEnv: process.env.VERCEL_ENV || null, // production | preview | development
+    vercelUrl: process.env.VERCEL_URL || null,
   });
 }
 

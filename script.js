@@ -1,6 +1,7 @@
 const STORAGE_KEYS = {
   settings: "pastself.settings.v1",
-  chat: "pastself.chat.v1",
+  chat: "pastself.chat.v2",
+  memory: "pastself.memory.v1",
 };
 
 const DEFAULT_PERSONA = `あなたは「1年前の私」です。
@@ -11,9 +12,32 @@ const DEFAULT_SETTINGS = {
   provider: "gemini", // "mock" | "gemini"
   model: "gemini-3-flash",
   persona: DEFAULT_PERSONA,
+  // どのスナップショット（過去の自分）を相手にするか。未指定=最新。
+  activeSnapshotId: "latest",
 };
 
 /** @typedef {{ id:string, role:"user"|"bot", text:string, ts:number }} ChatMessage */
+/** @typedef {{ snapshotId:string, turnIndex:number, ts:number, profile:any, delta?:any }} ProfileSnapshot */
+
+const DEFAULT_PROFILE = {
+  version: 1,
+  updatedAt: 0,
+  tone: {
+    politeness: 0.55, // 0..1
+    assertiveness: 0.5, // 0..1
+    newlineRate: 0.35, // 0..1
+    emojiRate: 0.05, // 0..1
+    endingSamples: [],
+    frequentWords: [],
+  },
+  empathyStyle: {
+    pattern: "共感→要点→確認",
+  },
+  values: [],
+  taboos: [],
+  catchphrases: [],
+  confidence: 0.15,
+};
 
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
@@ -74,27 +98,42 @@ function ensureFirstBotGreeting(state) {
   state.messages.push({
     id: uid(),
     role: "bot",
-    text: "1年前の私です。いま一番困ってることは何？（短くでOK）",
+    text: "過去の私です。いま一番困ってることは何？（短くでOK）\n\n※会話するほど「自分の再現」を更新して、毎ターン保存していきます。",
     ts: now(),
   });
 }
 
 function createState() {
-  /** @type {{ settings: typeof DEFAULT_SETTINGS, messages: ChatMessage[] }} */
+  /** @type {{ settings: typeof DEFAULT_SETTINGS, messages: ChatMessage[], profile:any, snapshots: ProfileSnapshot[] }} */
   const state = {
     settings: { ...DEFAULT_SETTINGS, ...loadJson(STORAGE_KEYS.settings, {}) },
     messages: loadJson(STORAGE_KEYS.chat, []),
+    ...loadJson(STORAGE_KEYS.memory, {}),
   };
   // 以前の版で保存されていたapiKeyは使わない（サーバー側envで保護する）
   if ("apiKey" in state.settings) delete state.settings.apiKey;
   state.settings.persona = sanitizeText(state.settings.persona || DEFAULT_PERSONA);
+  if (!state.profile) state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
+  if (!Array.isArray(state.snapshots)) state.snapshots = [];
   ensureFirstBotGreeting(state);
+  // 初回は「最新」を選べるように、空なら初期スナップショットを作る
+  if (state.snapshots.length === 0) {
+    const initial = {
+      snapshotId: uid(),
+      turnIndex: 0,
+      ts: now(),
+      profile: structuredCloneSafe(state.profile),
+      delta: { reason: "init" },
+    };
+    state.snapshots.push(initial);
+  }
   return state;
 }
 
 function persist(state) {
   saveJson(STORAGE_KEYS.settings, state.settings);
   saveJson(STORAGE_KEYS.chat, state.messages);
+  saveJson(STORAGE_KEYS.memory, { profile: state.profile, snapshots: state.snapshots });
 }
 
 function render(state) {
@@ -136,6 +175,124 @@ function lastUserMessage(messages) {
     if (messages[i].role === "user") return messages[i].text;
   }
   return "";
+}
+
+function structuredCloneSafe(obj) {
+  try {
+    // structuredCloneが無い環境や、コピー不可の値に備える
+    if (typeof structuredClone === "function") return structuredClone(obj);
+  } catch {
+    // ignore
+  }
+  return JSON.parse(JSON.stringify(obj ?? null));
+}
+
+function countUserTurns(messages) {
+  let n = 0;
+  for (const m of messages) if (m?.role === "user") n++;
+  return n;
+}
+
+function extractEndingSample(text) {
+  const t = sanitizeText(text).trim();
+  if (!t) return "";
+  const lastLine = t.split("\n").filter(Boolean).slice(-1)[0] || t;
+  const m = lastLine.match(/(.{0,12})([。！？!?…]{0,2})\s*$/);
+  return (m?.[0] || lastLine).slice(-12);
+}
+
+function tokenizeJaLike(text) {
+  // 形態素解析なしの簡易版：英数字/ひらがな/カタカナ/漢字の連なりを拾う
+  const t = sanitizeText(text).toLowerCase();
+  const tokens = t.match(/[a-z0-9]{2,}|[ぁ-ん]{2,}|[ァ-ヶー]{2,}|[一-龯]{1,}/g) || [];
+  return tokens.filter((x) => x.length >= 2 && x.length <= 16);
+}
+
+function updateProfileFromUserText(profile, text) {
+  const p = structuredCloneSafe(profile || DEFAULT_PROFILE);
+  const t = sanitizeText(text);
+  const len = t.length || 1;
+
+  const newlines = (t.match(/\n/g) || []).length;
+  const emojiLike = (t.match(/[\u{1F300}-\u{1FAFF}]/gu) || []).length;
+  const exclam = (t.match(/[!！]/g) || []).length;
+  const question = (t.match(/[?？]/g) || []).length;
+
+  // 緩く指数移動平均で更新（会話が進むほど収束する）
+  const alpha = 0.18;
+  p.tone.newlineRate = clamp01((1 - alpha) * p.tone.newlineRate + alpha * clamp01(newlines / Math.max(1, t.split("\n").length)));
+  p.tone.emojiRate = clamp01((1 - alpha) * p.tone.emojiRate + alpha * clamp01(emojiLike / Math.max(1, len / 12)));
+  p.tone.assertiveness = clamp01((1 - alpha) * p.tone.assertiveness + alpha * clamp01(exclam / Math.max(1, len / 20)));
+  // 疑問が多いほど「断定度」を下げる（assertivenessの補正）
+  p.tone.assertiveness = clamp01(p.tone.assertiveness * (1 - clamp01(question / 6) * 0.25));
+
+  const ending = extractEndingSample(t);
+  if (ending) {
+    p.tone.endingSamples = Array.isArray(p.tone.endingSamples) ? p.tone.endingSamples : [];
+    p.tone.endingSamples.unshift(ending);
+    p.tone.endingSamples = p.tone.endingSamples.slice(0, 8);
+  }
+
+  const tokens = tokenizeJaLike(t);
+  if (tokens.length) {
+    const map = new Map((p.tone.frequentWords || []).map((w) => [w.word, w.count]));
+    for (const tok of tokens.slice(0, 24)) map.set(tok, (map.get(tok) || 0) + 1);
+    const arr = [...map.entries()]
+      .map(([word, count]) => ({ word, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 12);
+    p.tone.frequentWords = arr;
+  }
+
+  // それっぽい短文を少し貯める（短めの文だけ）
+  const short = sanitizeText(t).trim();
+  if (short && short.length <= 60) {
+    p.catchphrases = Array.isArray(p.catchphrases) ? p.catchphrases : [];
+    if (!p.catchphrases.includes(short)) p.catchphrases.unshift(short);
+    p.catchphrases = p.catchphrases.slice(0, 10);
+  }
+
+  p.updatedAt = now();
+  p.confidence = clamp01((p.confidence || 0.1) + 0.01);
+  return p;
+}
+
+function clamp01(x) {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+function createSnapshot(state, sourceMessageId, delta) {
+  const turnIndex = countUserTurns(state.messages);
+  const snap = {
+    snapshotId: uid(),
+    turnIndex,
+    ts: now(),
+    profile: structuredCloneSafe(state.profile),
+    delta: structuredCloneSafe({ ...(delta || {}), sourceMessageId: sourceMessageId || null }),
+  };
+  state.snapshots.push(snap);
+  // サイズが無限に増えるのを防ぐ（必要なら上限を上げてOK）
+  const MAX = 250;
+  if (state.snapshots.length > MAX) state.snapshots = state.snapshots.slice(-MAX);
+  return snap;
+}
+
+function getActiveSnapshot(state) {
+  const key = state.settings.activeSnapshotId || "latest";
+  if (key === "latest") return state.snapshots[state.snapshots.length - 1] || null;
+  const found = state.snapshots.find((s) => s.snapshotId === key);
+  return found || state.snapshots[state.snapshots.length - 1] || null;
+}
+
+function buildPersonaWithProfile(basePersona, snapshot) {
+  const prof = snapshot?.profile || null;
+  const header = basePersona ? String(basePersona).trim() : "";
+  const profileBlock = prof
+    ? `\n\n---\nあなたは「このスナップショット時点の私」です。\nsnapshot:\n- turn: ${snapshot.turnIndex}\n- time: ${fmtTime(snapshot.ts)}\n\nprofile(json):\n${JSON.stringify(prof, null, 2)}\n\n口調はこのprofileに強く合わせてください。`
+    : "";
+  return (header + profileBlock).trim();
 }
 
 function makeMockReply(persona, messages) {
@@ -213,13 +370,15 @@ async function callGeminiViaServer({ model, persona, messages }) {
 
 async function generateReply(state) {
   const { provider, model, persona } = state.settings;
+  const activeSnap = getActiveSnapshot(state);
+  const personaWithProfile = buildPersonaWithProfile(persona, activeSnap);
   if (provider === "gemini") {
     if (!model) throw new Error("モデル名が未設定です（設定から入力）");
-    return await callGeminiViaServer({ model, persona, messages: state.messages });
+    return await callGeminiViaServer({ model, persona: personaWithProfile, messages: state.messages });
   }
   // default mock
   await new Promise((r) => setTimeout(r, 350));
-  return makeMockReply(persona, state.messages);
+  return makeMockReply(personaWithProfile, state.messages);
 }
 
 function wireUI(state) {
@@ -234,6 +393,7 @@ function wireUI(state) {
   const providerSelect = el("providerSelect");
   const modelInput = el("modelInput");
   const personaInput = el("personaInput");
+  const snapshotSelect = el("snapshotSelect");
   const btnSave = el("btnSave");
   const btnTest = el("btnTest");
   const testResult = el("testResult");
@@ -248,6 +408,21 @@ function wireUI(state) {
     providerSelect.value = state.settings.provider;
     modelInput.value = state.settings.model || "";
     personaInput.value = state.settings.persona || DEFAULT_PERSONA;
+    // snapshots
+    snapshotSelect.innerHTML = "";
+    const optLatest = document.createElement("option");
+    optLatest.value = "latest";
+    optLatest.textContent = "最新（いまの自分）";
+    snapshotSelect.appendChild(optLatest);
+    // 新しい順に並べる
+    const snaps = [...(state.snapshots || [])].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    for (const s of snaps) {
+      const opt = document.createElement("option");
+      opt.value = s.snapshotId;
+      opt.textContent = `turn ${s.turnIndex} · ${fmtTime(s.ts)}`;
+      snapshotSelect.appendChild(opt);
+    }
+    snapshotSelect.value = state.settings.activeSnapshotId || "latest";
     testResult.textContent = "";
     settingsDialog.showModal();
   }
@@ -265,6 +440,7 @@ function wireUI(state) {
     state.settings.provider = providerSelect.value === "gemini" ? "gemini" : "mock";
     state.settings.model = sanitizeText(modelInput.value || DEFAULT_SETTINGS.model).trim();
     state.settings.persona = sanitizeText(personaInput.value || DEFAULT_PERSONA).trim();
+    state.settings.activeSnapshotId = snapshotSelect.value || "latest";
     persist(state);
     closeSettings();
   });
@@ -297,7 +473,18 @@ function wireUI(state) {
 
   btnNewChat.addEventListener("click", () => {
     state.messages = [];
+    state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
+    state.snapshots = [];
     ensureFirstBotGreeting(state);
+    // 初期スナップショット
+    state.snapshots.push({
+      snapshotId: uid(),
+      turnIndex: 0,
+      ts: now(),
+      profile: structuredCloneSafe(state.profile),
+      delta: { reason: "init" },
+    });
+    state.settings.activeSnapshotId = "latest";
     persist(state);
     render(state);
     promptInput.focus();
@@ -305,17 +492,31 @@ function wireUI(state) {
 
   btnClearChat.addEventListener("click", () => {
     state.messages = [];
+    state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
+    state.snapshots = [];
     ensureFirstBotGreeting(state);
+    state.snapshots.push({
+      snapshotId: uid(),
+      turnIndex: 0,
+      ts: now(),
+      profile: structuredCloneSafe(state.profile),
+      delta: { reason: "init" },
+    });
+    state.settings.activeSnapshotId = "latest";
     persist(state);
     render(state);
   });
 
   btnExport.addEventListener("click", () => {
     const payload = {
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       settings: { ...state.settings },
       messages: state.messages,
+      memory: {
+        profile: state.profile,
+        snapshots: state.snapshots,
+      },
     };
     downloadText(`pastself-chat-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(payload, null, 2));
   });
@@ -335,7 +536,34 @@ function wireUI(state) {
       state.messages = data.messages
         .filter((m) => m && (m.role === "user" || m.role === "bot") && typeof m.text === "string")
         .map((m) => ({ id: m.id || uid(), role: m.role, text: sanitizeText(m.text), ts: Number(m.ts) || now() }));
+      if (data?.memory?.profile) {
+        state.profile = data.memory.profile;
+      }
+      if (Array.isArray(data?.memory?.snapshots)) {
+        state.snapshots = data.memory.snapshots
+          .filter((s) => s && typeof s.snapshotId === "string" && typeof s.turnIndex === "number")
+          .map((s) => ({
+            snapshotId: s.snapshotId || uid(),
+            turnIndex: Number(s.turnIndex) || 0,
+            ts: Number(s.ts) || now(),
+            profile: s.profile ?? structuredCloneSafe(DEFAULT_PROFILE),
+            delta: s.delta ?? null,
+          }));
+      }
+      if (data?.settings && typeof data.settings === "object") {
+        // apiKeyなどは取り込まない
+        const next = { ...state.settings, ...data.settings };
+        if ("apiKey" in next) delete next.apiKey;
+        state.settings = next;
+      }
       ensureFirstBotGreeting(state);
+      if (!state.profile) state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
+      if (!Array.isArray(state.snapshots) || state.snapshots.length === 0) {
+        state.snapshots = [
+          { snapshotId: uid(), turnIndex: 0, ts: now(), profile: structuredCloneSafe(state.profile), delta: { reason: "init" } },
+        ];
+      }
+      if (!state.settings.activeSnapshotId) state.settings.activeSnapshotId = "latest";
       persist(state);
       render(state);
     } catch (err) {
@@ -348,7 +576,13 @@ function wireUI(state) {
     const text = sanitizeText(promptInput.value).trim();
     if (!text) return;
 
-    state.messages.push({ id: uid(), role: "user", text, ts: now() });
+    const messageId = uid();
+    state.messages.push({ id: messageId, role: "user", text, ts: now() });
+    // 毎チャット（ユーザー入力）ごとに「自分プロファイル」を更新してスナップショット保存
+    const before = structuredCloneSafe(state.profile);
+    state.profile = updateProfileFromUserText(state.profile, text);
+    const delta = { reason: "user_message", beforeUpdatedAt: before?.updatedAt ?? null, afterUpdatedAt: state.profile?.updatedAt ?? null };
+    createSnapshot(state, messageId, delta);
     promptInput.value = "";
     persist(state);
     render(state);

@@ -8,9 +8,8 @@ const DEFAULT_PERSONA = `あなたは「1年前の私」です。
 短く要点から。必要なら質問して確認してください。`;
 
 const DEFAULT_SETTINGS = {
-  provider: "mock", // "mock" | "gemini"
+  provider: "gemini", // "mock" | "gemini"
   model: "gemini-2.0-flash",
-  apiKey: "",
   persona: DEFAULT_PERSONA,
 };
 
@@ -86,6 +85,8 @@ function createState() {
     settings: { ...DEFAULT_SETTINGS, ...loadJson(STORAGE_KEYS.settings, {}) },
     messages: loadJson(STORAGE_KEYS.chat, []),
   };
+  // 以前の版で保存されていたapiKeyは使わない（サーバー側envで保護する）
+  if ("apiKey" in state.settings) delete state.settings.apiKey;
   state.settings.persona = sanitizeText(state.settings.persona || DEFAULT_PERSONA);
   ensureFirstBotGreeting(state);
   return state;
@@ -166,61 +167,44 @@ function makeMockReply(persona, messages) {
   return lines.join("\n");
 }
 
-async function callGemini({ apiKey, model, persona, messages }) {
-  // NOTE: This is a minimal direct-from-browser call.
-  // Production should proxy via server to protect keys.
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(
-    apiKey
-  )}`;
-
-  const contents = [];
-  // persona as "system" equivalent: Gemini supports systemInstruction in some variants,
-  // but v1beta generateContent commonly uses "contents". We'll prepend as user instruction.
-  if (persona && persona.trim()) {
-    contents.push({
-      role: "user",
-      parts: [{ text: `指示:\n${persona.trim()}` }],
+async function callGeminiViaServer({ model, persona, messages }) {
+  let resp;
+  try {
+    resp = await fetch("/api/gemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, persona, messages }),
     });
+  } catch (e) {
+    throw new Error(
+      `Geminiに接続できませんでした（/api/gemini）\n` +
+        `ローカル直開きの場合はサーバーが無いので、Vercelにデプロイして試すか、設定で「疑似応答」に切り替えてください。\n` +
+        `詳細: ${e?.message || String(e)}`
+    );
   }
 
-  // include last N turns to keep it simple
-  const recent = messages.slice(-12);
-  for (const m of recent) {
-    contents.push({
-      role: m.role === "user" ? "user" : "model",
-      parts: [{ text: m.text }],
-    });
-  }
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents,
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 512,
-      },
-    }),
-  });
-
+  const ct = resp.headers.get("content-type") || "";
+  const data = ct.includes("application/json") ? await resp.json().catch(() => ({})) : {};
   if (!resp.ok) {
-    const t = await resp.text().catch(() => "");
-    throw new Error(`Gemini API error: ${resp.status} ${resp.statusText}${t ? `\n${t}` : ""}`);
+    const hint =
+      data?.hint ||
+      (data?.error === "Missing GEMINI_API_KEY"
+        ? "Vercel環境変数に GEMINI_API_KEY を設定してください。"
+        : "");
+    const base = data?.error || `Gemini API error (${resp.status} ${resp.statusText})`;
+    throw new Error(`${base}${hint ? `\n${hint}` : ""}`);
   }
 
-  const data = await resp.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p?.text).filter(Boolean).join("") ?? "";
-  if (!text) throw new Error("Geminiの返答が空でした（設定/モデル名を確認）");
+  const text = data?.text || "";
+  if (!text) throw new Error("Geminiの返答が空でした（モデル名を確認）");
   return text;
 }
 
 async function generateReply(state) {
-  const { provider, apiKey, model, persona } = state.settings;
+  const { provider, model, persona } = state.settings;
   if (provider === "gemini") {
-    if (!apiKey) throw new Error("APIキーが未設定です（設定から入力）");
     if (!model) throw new Error("モデル名が未設定です（設定から入力）");
-    return await callGemini({ apiKey, model, persona, messages: state.messages });
+    return await callGeminiViaServer({ model, persona, messages: state.messages });
   }
   // default mock
   await new Promise((r) => setTimeout(r, 350));
@@ -238,7 +222,6 @@ function wireUI(state) {
 
   const providerSelect = el("providerSelect");
   const modelInput = el("modelInput");
-  const apiKeyInput = el("apiKeyInput");
   const personaInput = el("personaInput");
   const btnSave = el("btnSave");
   const btnTest = el("btnTest");
@@ -253,7 +236,6 @@ function wireUI(state) {
   function openSettings() {
     providerSelect.value = state.settings.provider;
     modelInput.value = state.settings.model || "";
-    apiKeyInput.value = state.settings.apiKey || "";
     personaInput.value = state.settings.persona || DEFAULT_PERSONA;
     testResult.textContent = "";
     settingsDialog.showModal();
@@ -271,7 +253,6 @@ function wireUI(state) {
     e.preventDefault();
     state.settings.provider = providerSelect.value === "gemini" ? "gemini" : "mock";
     state.settings.model = sanitizeText(modelInput.value || DEFAULT_SETTINGS.model).trim();
-    state.settings.apiKey = sanitizeText(apiKeyInput.value).trim();
     state.settings.persona = sanitizeText(personaInput.value || DEFAULT_PERSONA).trim();
     persist(state);
     closeSettings();
@@ -282,7 +263,6 @@ function wireUI(state) {
     try {
       const provider = providerSelect.value === "gemini" ? "gemini" : "mock";
       const model = sanitizeText(modelInput.value || DEFAULT_SETTINGS.model).trim();
-      const apiKey = sanitizeText(apiKeyInput.value).trim();
       const persona = sanitizeText(personaInput.value || DEFAULT_PERSONA).trim();
 
       if (provider === "mock") {
@@ -291,8 +271,7 @@ function wireUI(state) {
         return;
       }
 
-      const text = await callGemini({
-        apiKey,
+      const text = await callGeminiViaServer({
         model,
         persona,
         messages: [
@@ -324,7 +303,7 @@ function wireUI(state) {
     const payload = {
       version: 1,
       exportedAt: new Date().toISOString(),
-      settings: { ...state.settings, apiKey: "" }, // don't export key
+      settings: { ...state.settings },
       messages: state.messages,
     };
     downloadText(`pastself-chat-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(payload, null, 2));

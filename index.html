@@ -76,8 +76,8 @@
             <label class="field">
               <span class="field__label">Geminiを使う（任意）</span>
               <select id="providerSelect" class="field__select">
-                <option value="mock">まずは疑似応答（おすすめ）</option>
-                <option value="gemini">Gemini API（キーが必要）</option>
+                <option value="gemini">Gemini（Vercel環境変数で接続）</option>
+                <option value="mock">疑似応答（フォールバック）</option>
               </select>
             </label>
 
@@ -88,11 +88,9 @@
           </div>
 
           <label class="field">
-            <span class="field__label">APIキー（ブラウザ保存・注意）</span>
-            <input id="apiKeyInput" class="field__input" type="password" placeholder="貼り付け（後で消せます）" />
+            <span class="field__label">Geminiキー（Vercelで保護）</span>
             <span class="field__help">
-              注意：この構成は<strong>フロントのみ</strong>なので、APIキーを入れるとブラウザ（localStorage）に保存されます。
-              本番はサーバー経由推奨です。
+              GeminiのAPIキーはこの画面では入力しません。Vercelの環境変数 <strong>GEMINI_API_KEY</strong> に設定してください（キーはブラウザに保存されません）。
             </span>
           </label>
 

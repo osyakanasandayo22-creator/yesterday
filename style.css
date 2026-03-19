@@ -412,6 +412,64 @@ body {
   line-height: 1.4;
 }
 
+.sidebar__historyHeader {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 6px 8px 2px;
+}
+
+.sidebar__history {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  max-height: 40vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.sidebar__history::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar__history::-webkit-scrollbar-thumb {
+  background: rgba(95, 99, 104, 0.35);
+  border-radius: 999px;
+}
+
+.sidebar__snapBtn {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  border-radius: 12px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.sidebar__snapBtn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(95, 99, 104, 0.25);
+}
+
+.sidebar__snapBtn--active {
+  background: rgba(26, 115, 232, 0.12);
+  border-color: rgba(26, 115, 232, 0.35);
+}
+
+.sidebar__snapText {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.sidebar__snapSub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
 .sidebtn {
   display: flex;
   align-items: center;

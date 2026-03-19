@@ -549,7 +549,8 @@ function clamp01(x) {
 }
 
 function createSnapshot(state, sourceMessageId, delta) {
-  const turnIndex = countUserTurns(state.messages);
+  // チャットを跨いで履歴として扱えるように、turnIndexは“全スナップショット通し”で増やす
+  const turnIndex = Array.isArray(state.snapshots) ? state.snapshots.length : 0;
   const snap = {
     snapshotId: uid(),
     turnIndex,
@@ -723,6 +724,7 @@ function wireUI(state) {
   const importFile = el("importFile");
   const btnThemeToggle = el("btnThemeToggle");
   const messagesEl = el("messages");
+  const snapshotSidebar = el("snapshotSidebar");
 
   async function copyToClipboard(text) {
     try {
@@ -807,6 +809,43 @@ function wireUI(state) {
       return;
     }
   });
+
+  function renderSnapshotSidebar() {
+    // 日付/履歴で「その日時点の自分」を選べるようにする
+    snapshotSidebar.innerHTML = "";
+    const activeKey = state.settings.activeSnapshotId || "latest";
+
+    const latestBtn = document.createElement("button");
+    latestBtn.type = "button";
+    latestBtn.className = `sidebar__snapBtn ${activeKey === "latest" ? "sidebar__snapBtn--active" : ""}`;
+    latestBtn.dataset.snapshotId = "latest";
+    latestBtn.innerHTML = `<div class="sidebar__snapText">最新（いまの自分）</div><div class="sidebar__snapSub">いちばん最近の意識</div>`;
+    snapshotSidebar.appendChild(latestBtn);
+
+    const snaps = [...(state.snapshots || [])].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    for (const s of snaps) {
+      if (!s || typeof s.snapshotId !== "string") continue;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `sidebar__snapBtn ${activeKey === s.snapshotId ? "sidebar__snapBtn--active" : ""}`;
+      btn.dataset.snapshotId = s.snapshotId;
+      btn.innerHTML = `<div class="sidebar__snapText">turn ${s.turnIndex}</div><div class="sidebar__snapSub">${fmtTime(s.ts)}</div>`;
+      snapshotSidebar.appendChild(btn);
+    }
+  }
+
+  snapshotSidebar.addEventListener("click", (e) => {
+    const btn = e.target?.closest?.(".sidebar__snapBtn");
+    if (!btn) return;
+    const nextId = String(btn.dataset.snapshotId || "latest") || "latest";
+    state.settings.activeSnapshotId = nextId;
+    persist(state);
+    render(state);
+    renderSnapshotSidebar();
+  });
+
+  // 初期表示（latest/履歴一覧）
+  renderSnapshotSidebar();
 
   btnThemeToggle.addEventListener("click", () => {
     const current = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
@@ -897,38 +936,21 @@ function wireUI(state) {
 
   btnNewChat.addEventListener("click", () => {
     state.messages = [];
-    state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
-    state.snapshots = [];
     ensureFirstBotGreeting(state);
-    // 初期スナップショット
-    state.snapshots.push({
-      snapshotId: uid(),
-      turnIndex: 0,
-      ts: now(),
-      profile: structuredCloneSafe(state.profile),
-      delta: { reason: "init" },
-    });
     state.settings.activeSnapshotId = "latest";
     persist(state);
     render(state);
+    renderSnapshotSidebar();
     promptInput.focus();
   });
 
   btnClearChat.addEventListener("click", () => {
     state.messages = [];
-    state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
-    state.snapshots = [];
     ensureFirstBotGreeting(state);
-    state.snapshots.push({
-      snapshotId: uid(),
-      turnIndex: 0,
-      ts: now(),
-      profile: structuredCloneSafe(state.profile),
-      delta: { reason: "init" },
-    });
     state.settings.activeSnapshotId = "latest";
     persist(state);
     render(state);
+    renderSnapshotSidebar();
   });
 
   btnExport.addEventListener("click", () => {
@@ -990,6 +1012,7 @@ function wireUI(state) {
       if (!state.settings.activeSnapshotId) state.settings.activeSnapshotId = "latest";
       persist(state);
       render(state);
+      renderSnapshotSidebar();
     } catch (err) {
       alert(`読み込みに失敗: ${err?.message || String(err)}`);
     }
@@ -1010,12 +1033,14 @@ function wireUI(state) {
     promptInput.value = "";
     persist(state);
     render(state);
+    renderSnapshotSidebar();
 
     setBusy(true);
     const typingId = uid();
     state.messages.push({ id: typingId, role: "bot", text: "", ts: now(), typing: true });
     persist(state);
     render(state);
+    renderSnapshotSidebar();
     try {
       const reply = await generateReply(state);
       const idx = state.messages.findIndex((m) => m?.id === typingId);
@@ -1026,6 +1051,7 @@ function wireUI(state) {
       }
       persist(state);
       render(state);
+      renderSnapshotSidebar();
     } catch (err) {
       const idx = state.messages.findIndex((m) => m?.id === typingId);
       const msg =
@@ -1037,6 +1063,7 @@ function wireUI(state) {
       }
       persist(state);
       render(state);
+      renderSnapshotSidebar();
     } finally {
       setBusy(false);
       promptInput.focus();

@@ -7,29 +7,54 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <div class="page" id="page">
-      <header class="topbar">
-        <div class="topbar__left">
-          <button class="link" id="btnNewChat" type="button" aria-label="新規チャット">新規</button>
-          <button class="link" id="btnClearChat" type="button" aria-label="このチャットを消去">消去</button>
+    <div class="app" id="page">
+      <aside class="sidebar" id="sidebar" aria-label="履歴ナビ">
+        <div class="sidebar__brand">
+          <span class="sidebar__logo" aria-hidden="true">Self</span>
         </div>
-        <div class="topbar__right">
-          <button class="link" id="btnSettings" type="button" aria-haspopup="dialog" aria-controls="settingsDialog">
-            設定
+        <div class="sidebar__section">
+          <button class="sidebtn" id="btnNewChat" type="button" aria-label="新規チャット">
+            <span class="sidebtn__icon" aria-hidden="true">+</span>
+            <span class="sidebtn__text">新規</span>
+          </button>
+          <button class="sidebtn" id="btnClearChat" type="button" aria-label="このチャットを消去">
+            <span class="sidebtn__icon" aria-hidden="true">x</span>
+            <span class="sidebtn__text">消去</span>
           </button>
         </div>
-      </header>
+        <div class="sidebar__section">
+          <button class="sidebtn sidebtn--ghost" id="btnSettings" type="button" aria-haspopup="dialog" aria-controls="settingsDialog">
+            <span class="sidebtn__icon" aria-hidden="true">G</span>
+            <span class="sidebtn__text">設定</span>
+          </button>
+        </div>
+        <div class="sidebar__grow" />
+        <div class="sidebar__hint">
+          <div class="sidebar__hintTitle">Tip</div>
+          <div class="sidebar__hintText">AIはここに会話を追加するだけ（履歴は1つ）</div>
+        </div>
+      </aside>
 
-      <main class="main">
-        <section class="hero" id="hero">
-          <div class="logo" aria-hidden="true">Self</div>
-          <h1 class="title">自分に聞く</h1>
-          <p class="subtitle">最小プロトタイプ：ログ保存＋疑似応答（あとでGeminiに差し替え可）</p>
-        </section>
+      <div class="workspace">
+        <header class="workspace__header">
+          <div class="workspace__headerTitle">
+            <div class="workspace__logoMini" aria-hidden="true">Self</div>
+            <div class="workspace__titleText">自分に聞く</div>
+          </div>
+          <div class="workspace__headerActions">
+            <button class="iconbtn" id="btnThemeToggle" type="button" aria-label="テーマ切り替え">T</button>
+          </div>
+        </header>
 
-        <section class="chat" id="chat" aria-live="polite" aria-label="チャット">
-          <div class="messages" id="messages"></div>
-          <div class="composer">
+        <main class="workspace__main" aria-label="チャット">
+          <div class="emptyState" id="emptyState">
+            <div class="emptyState__title">最小プロトタイプ</div>
+            <div class="emptyState__subtitle">ログ保存＋疑似応答（あとでGeminiに差し替え可）</div>
+          </div>
+
+          <div class="messages" id="messages" aria-live="polite"></div>
+
+          <div class="composer composer--fixed">
             <form id="composerForm" class="composer__form" autocomplete="off">
               <input
                 id="promptInput"
@@ -40,18 +65,14 @@
                 placeholder="自分に質問…"
                 aria-label="メッセージ"
               />
-              <button id="sendButton" class="composer__send" type="submit">送信</button>
+              <button id="sendButton" class="composer__send" type="submit" aria-label="送信">&gt;</button>
             </form>
             <div class="composer__hint" id="hint">
-              Enterで送信 / Shift+Enterは未対応（最小版）
+              Enterで送信（Shift+Enterは未対応）
             </div>
           </div>
-        </section>
-      </main>
-
-      <footer class="footer">
-        <span class="footer__text">ローカル保存: このPCのブラウザに保存されます</span>
-      </footer>
+        </main>
+      </div>
     </div>
 
     <dialog class="dialog" id="settingsDialog" aria-label="設定">

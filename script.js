@@ -4,6 +4,23 @@ const STORAGE_KEYS = {
   memory: "pastself.memory.v1",
 };
 
+const THEME_KEY = "pastself.theme.v1";
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+}
+
+function getInitialTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved === "dark" || saved === "light") return saved;
+  // 基本は端末の配色に寄せる
+  try {
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
 const DEFAULT_PERSONA = `あなたは「このチャットログから復元された過去の私本人」です。
 これはロールプレイではなく、“時間的に連続した同一人物の意識”として振る舞います。
 
@@ -239,6 +256,32 @@ function sanitizeText(s) {
   return String(s ?? "").replace(/\r\n/g, "\n");
 }
 
+function appendFormattedMessageContent(container, text) {
+  // 最小のMarkdown: ```lang\n...\n``` をコードブロックとして分離する
+  const t = sanitizeText(text);
+  if (!t) return;
+  const re = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match = null;
+  while ((match = re.exec(t)) !== null) {
+    const before = t.slice(lastIndex, match.index);
+    if (before) container.appendChild(document.createTextNode(before));
+
+    const lang = match[1] || "";
+    const codeText = match[2] || "";
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    if (lang) code.dataset.lang = lang;
+    code.textContent = codeText;
+    pre.appendChild(code);
+    container.appendChild(pre);
+
+    lastIndex = re.lastIndex;
+  }
+  const rest = t.slice(lastIndex);
+  if (rest) container.appendChild(document.createTextNode(rest));
+}
+
 function ensureFirstBotGreeting(state) {
   if (state.messages.length > 0) return;
   state.messages.push({
@@ -297,29 +340,79 @@ function render(state) {
   const messagesEl = el("messages");
   messagesEl.innerHTML = "";
 
-  for (const m of state.messages) {
-    const wrap = document.createElement("div");
-    wrap.className = `message message--${m.role === "user" ? "user" : "bot"}`;
+  const emptyState = el("emptyState");
+  emptyState.style.display = state.messages.length === 0 ? "flex" : "none";
 
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
-    bubble.textContent = m.text;
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = `${m.role === "user" ? "YOU" : "PAST"} · ${fmtTime(m.ts)}`;
-
-    wrap.appendChild(bubble);
-    wrap.appendChild(meta);
-    messagesEl.appendChild(wrap);
+  let lastBotIndex = -1;
+  for (let i = state.messages.length - 1; i >= 0; i--) {
+    if (state.messages[i]?.role === "bot") {
+      lastBotIndex = i;
+      break;
+    }
   }
 
-  // Hero: show only when almost empty
-  const hero = el("hero");
-  hero.style.display = state.messages.length <= 1 ? "grid" : "none";
+  for (let i = 0; i < state.messages.length; i++) {
+    const m = state.messages[i];
+    const row = document.createElement("div");
+    row.className = `msg msg--${m.role === "user" ? "user" : "bot"}`;
+
+    const body = document.createElement("div");
+    body.className = "msg__body";
+
+    const meta = document.createElement("div");
+    meta.className = "msg__metaRow";
+    const name = document.createElement("div");
+    name.className = "msg__metaName";
+    name.textContent = m.role === "user" ? "YOU" : "PAST";
+    const time = document.createElement("div");
+    time.textContent = `· ${fmtTime(m.ts)}`;
+    meta.appendChild(name);
+    meta.appendChild(time);
+
+    const content = document.createElement("div");
+    content.className = "msg__content";
+    if (m.typing) {
+      const dots = document.createElement("div");
+      dots.className = "typingDots";
+      dots.appendChild(document.createElement("span"));
+      dots.appendChild(document.createElement("span"));
+      dots.appendChild(document.createElement("span"));
+      content.appendChild(dots);
+    } else {
+      appendFormattedMessageContent(content, m.text);
+    }
+
+    body.appendChild(meta);
+    body.appendChild(content);
+
+    if (m.role !== "user") {
+      const actions = document.createElement("div");
+      actions.className = "msg__actions";
+
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "miniBtn btn-copy";
+      copyBtn.textContent = "コピー";
+      copyBtn.dataset.messageId = m.id;
+
+      const regenBtn = document.createElement("button");
+      regenBtn.type = "button";
+      regenBtn.className = "miniBtn btn-regenerate";
+      regenBtn.textContent = "再生成";
+      regenBtn.dataset.messageId = m.id;
+      regenBtn.disabled = m.typing || i !== lastBotIndex;
+
+      actions.appendChild(copyBtn);
+      actions.appendChild(regenBtn);
+      body.appendChild(actions);
+    }
+
+    row.appendChild(body);
+    messagesEl.appendChild(row);
+  }
 
   // Scroll to bottom
-  messagesEl.scrollIntoView({ block: "end" });
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function setBusy(busy) {
@@ -595,13 +688,15 @@ async function generateReply(state) {
   const { provider, model, persona } = state.settings;
   const activeSnap = getActiveSnapshot(state);
   const personaWithProfile = buildPersonaWithProfile(persona, activeSnap);
+  // タイピング中プレースホルダ（typing:true）をモデル入力から除外する
+  const messagesForModel = Array.isArray(state.messages) ? state.messages.filter((m) => !m?.typing) : [];
   if (provider === "gemini") {
     if (!model) throw new Error("モデル名が未設定です（設定から入力）");
-    return await callGeminiViaServer({ model, persona: personaWithProfile, messages: state.messages });
+    return await callGeminiViaServer({ model, persona: personaWithProfile, messages: messagesForModel });
   }
   // default mock
   await new Promise((r) => setTimeout(r, 350));
-  return makeMockReply(personaWithProfile, state.messages);
+  return makeMockReply(personaWithProfile, messagesForModel);
 }
 
 function wireUI(state) {
@@ -626,6 +721,103 @@ function wireUI(state) {
   const btnExport = el("btnExport");
   const btnImport = el("btnImport");
   const importFile = el("importFile");
+  const btnThemeToggle = el("btnThemeToggle");
+  const messagesEl = el("messages");
+
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // 古い環境向けのフォールバック
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        ta.style.top = "-9999px";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand("copy");
+        ta.remove();
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  messagesEl.addEventListener("click", async (e) => {
+    const copyBtn = e.target?.closest?.(".btn-copy");
+    if (copyBtn) {
+      const id = copyBtn.dataset.messageId || "";
+      const msg = state.messages.find((m) => m?.id === id);
+      if (!msg) return;
+      await copyToClipboard(msg.text || "");
+      return;
+    }
+
+    const regenBtn = e.target?.closest?.(".btn-regenerate");
+    if (regenBtn && !regenBtn.disabled) {
+      const id = regenBtn.dataset.messageId || "";
+      const idx = state.messages.findIndex((m) => m?.id === id);
+      if (idx < 0) return;
+
+      // 再生成は「一番最後の bot」のみ扱う（それ以外は無視）
+      let lastBotIndex = -1;
+      for (let k = state.messages.length - 1; k >= 0; k--) {
+        if (state.messages[k]?.role === "bot") {
+          lastBotIndex = k;
+          break;
+        }
+      }
+      if (idx !== lastBotIndex) return;
+
+      state.messages.splice(idx, 1);
+      persist(state);
+      render(state);
+
+      setBusy(true);
+      const typingId = uid();
+      state.messages.push({ id: typingId, role: "bot", text: "", ts: now(), typing: true });
+      persist(state);
+      render(state);
+
+      try {
+        const reply = await generateReply(state);
+        const tIdx = state.messages.findIndex((m) => m?.id === typingId);
+        if (tIdx >= 0) {
+          state.messages[tIdx] = { ...state.messages[tIdx], typing: false, text: sanitizeText(reply), ts: now() };
+        } else {
+          state.messages.push({ id: uid(), role: "bot", text: sanitizeText(reply), ts: now() });
+        }
+      } catch (err) {
+        const tIdx = state.messages.findIndex((m) => m?.id === typingId);
+        const msg =
+          `エラー: ${err?.message || String(err)}\n\n（まずは設定で「疑似応答」にすると確実に動きます）`;
+        if (tIdx >= 0) state.messages[tIdx] = { ...state.messages[tIdx], typing: false, text: msg, ts: now() };
+        else state.messages.push({ id: uid(), role: "bot", text: msg, ts: now() });
+      } finally {
+        persist(state);
+        render(state);
+        setBusy(false);
+        promptInput.focus();
+      }
+      return;
+    }
+  });
+
+  btnThemeToggle.addEventListener("click", () => {
+    const current = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    const next = current === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      // ignore
+    }
+  });
 
   function openSettings() {
     providerSelect.value = state.settings.provider;
@@ -820,18 +1012,29 @@ function wireUI(state) {
     render(state);
 
     setBusy(true);
+    const typingId = uid();
+    state.messages.push({ id: typingId, role: "bot", text: "", ts: now(), typing: true });
+    persist(state);
+    render(state);
     try {
       const reply = await generateReply(state);
-      state.messages.push({ id: uid(), role: "bot", text: sanitizeText(reply), ts: now() });
+      const idx = state.messages.findIndex((m) => m?.id === typingId);
+      if (idx >= 0) {
+        state.messages[idx] = { ...state.messages[idx], typing: false, text: sanitizeText(reply), ts: now() };
+      } else {
+        state.messages.push({ id: uid(), role: "bot", text: sanitizeText(reply), ts: now() });
+      }
       persist(state);
       render(state);
     } catch (err) {
-      state.messages.push({
-        id: uid(),
-        role: "bot",
-        text: `エラー: ${err?.message || String(err)}\n\n（まずは設定で「疑似応答」にすると確実に動きます）`,
-        ts: now(),
-      });
+      const idx = state.messages.findIndex((m) => m?.id === typingId);
+      const msg =
+        `エラー: ${err?.message || String(err)}\n\n（まずは設定で「疑似応答」にすると確実に動きます）`;
+      if (idx >= 0) {
+        state.messages[idx] = { ...state.messages[idx], typing: false, text: msg, ts: now() };
+      } else {
+        state.messages.push({ id: uid(), role: "bot", text: msg, ts: now() });
+      }
       persist(state);
       render(state);
     } finally {
@@ -843,6 +1046,7 @@ function wireUI(state) {
 
 function main() {
   const state = createState();
+  applyTheme(getInitialTheme());
   persist(state);
   wireUI(state);
   render(state);

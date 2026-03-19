@@ -955,19 +955,7 @@ function wireUI(state) {
 
   btnNewChat.addEventListener("click", () => {
     state.messages = [];
-    state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
-    state.snapshots = [];
     ensureFirstBotGreeting(state);
-    // 初期スナップショット（会話の先頭 = 挨拶ボット）
-    state.snapshots.push({
-      snapshotId: uid(),
-      turnIndex: 0,
-      ts: now(),
-      profile: structuredCloneSafe(state.profile),
-      userMessageIndex: null,
-      endMessageIndex: state.messages.length - 1,
-      delta: { reason: "init" },
-    });
     state.settings.activeSnapshotId = "latest";
     persist(state);
     render(state);
@@ -977,18 +965,7 @@ function wireUI(state) {
 
   btnClearChat.addEventListener("click", () => {
     state.messages = [];
-    state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
-    state.snapshots = [];
     ensureFirstBotGreeting(state);
-    state.snapshots.push({
-      snapshotId: uid(),
-      turnIndex: 0,
-      ts: now(),
-      profile: structuredCloneSafe(state.profile),
-      userMessageIndex: null,
-      endMessageIndex: state.messages.length - 1,
-      delta: { reason: "init" },
-    });
     state.settings.activeSnapshotId = "latest";
     persist(state);
     render(state);
@@ -1074,8 +1051,6 @@ function wireUI(state) {
         if (snap && typeof snap.endMessageIndex === "number" && snap.endMessageIndex >= 0) {
           state.messages = state.messages.slice(0, snap.endMessageIndex + 1);
         }
-        // 会話の先（未来）に相当するスナップショットは切り捨て
-        state.snapshots = state.snapshots.slice(0, snapIdx + 1);
         if (snap?.profile) state.profile = structuredCloneSafe(snap.profile);
       }
       // この時点の自分で続きを話す（以後の履歴と整合させるため）

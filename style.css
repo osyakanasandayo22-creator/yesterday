@@ -16,6 +16,23 @@
   --sans: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI",
     "Yu Gothic", Meiryo, sans-serif;
 }
+:root {
+  --bg: #ffffff;
+  --text: #202124;
+  --muted: #5f6368;
+  --border: #dadce0;
+  --shadow: 0 1px 6px rgba(32, 33, 36, 0.28);
+  --brand: #1a73e8;
+  --brandHover: #1558b0;
+  --surface: #ffffff;
+  --bubbleUser: #e8f0fe;
+  --bubbleBot: #f1f3f4;
+  --radius: 999px;
+  --radiusCard: 18px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --sans: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI",
+    "Yu Gothic", Meiryo, sans-serif;
+}
 
 * {
   box-sizing: border-box;

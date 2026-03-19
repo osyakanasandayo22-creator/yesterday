@@ -323,6 +323,8 @@ function createState() {
       turnIndex: 0,
       ts: now(),
       profile: structuredCloneSafe(state.profile),
+      userMessageIndex: null,
+      endMessageIndex: state.messages.length - 1,
       delta: { reason: "init" },
     };
     state.snapshots.push(initial);
@@ -340,19 +342,29 @@ function render(state) {
   const messagesEl = el("messages");
   messagesEl.innerHTML = "";
 
+  // 選択中のスナップショットまでの会話を表示する
+  const activeKey = state.settings.activeSnapshotId || "latest";
+  let visibleMessages = state.messages;
+  if (activeKey !== "latest") {
+    const snap = (state.snapshots || []).find((s) => s?.snapshotId === activeKey);
+    if (snap && typeof snap.endMessageIndex === "number" && snap.endMessageIndex >= 0) {
+      visibleMessages = state.messages.slice(0, snap.endMessageIndex + 1);
+    }
+  }
+
   const emptyState = el("emptyState");
-  emptyState.style.display = state.messages.length === 0 ? "flex" : "none";
+  emptyState.style.display = visibleMessages.length === 0 ? "flex" : "none";
 
   let lastBotIndex = -1;
-  for (let i = state.messages.length - 1; i >= 0; i--) {
-    if (state.messages[i]?.role === "bot") {
+  for (let i = visibleMessages.length - 1; i >= 0; i--) {
+    if (visibleMessages[i]?.role === "bot") {
       lastBotIndex = i;
       break;
     }
   }
 
-  for (let i = 0; i < state.messages.length; i++) {
-    const m = state.messages[i];
+  for (let i = 0; i < visibleMessages.length; i++) {
+    const m = visibleMessages[i];
     const row = document.createElement("div");
     row.className = `msg msg--${m.role === "user" ? "user" : "bot"}`;
 
@@ -400,7 +412,7 @@ function render(state) {
       regenBtn.className = "miniBtn btn-regenerate";
       regenBtn.textContent = "再生成";
       regenBtn.dataset.messageId = m.id;
-      regenBtn.disabled = m.typing || i !== lastBotIndex;
+      regenBtn.disabled = m.typing || i !== lastBotIndex || activeKey !== "latest";
 
       actions.appendChild(copyBtn);
       actions.appendChild(regenBtn);
@@ -551,11 +563,16 @@ function clamp01(x) {
 function createSnapshot(state, sourceMessageId, delta) {
   // チャットを跨いで履歴として扱えるように、turnIndexは“全スナップショット通し”で増やす
   const turnIndex = Array.isArray(state.snapshots) ? state.snapshots.length : 0;
+  const userIdx = Array.isArray(state.messages) ? state.messages.findIndex((m) => m?.id === sourceMessageId) : -1;
+  const userMessageIndex = userIdx >= 0 ? userIdx : null;
   const snap = {
     snapshotId: uid(),
     turnIndex,
     ts: now(),
     profile: structuredCloneSafe(state.profile),
+    userMessageIndex,
+    // ここは bot 返答が確定したタイミングで上書きする
+    endMessageIndex: userMessageIndex,
     delta: structuredCloneSafe({ ...(delta || {}), sourceMessageId: sourceMessageId || null }),
   };
   state.snapshots.push(snap);
@@ -896,6 +913,8 @@ function wireUI(state) {
     state.settings.persona = sanitizeText(personaInput.value || DEFAULT_PERSONA).trim();
     state.settings.activeSnapshotId = snapshotSelect.value || "latest";
     persist(state);
+    render(state);
+    renderSnapshotSidebar();
     closeSettings();
   });
 
@@ -936,7 +955,19 @@ function wireUI(state) {
 
   btnNewChat.addEventListener("click", () => {
     state.messages = [];
+    state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
+    state.snapshots = [];
     ensureFirstBotGreeting(state);
+    // 初期スナップショット（会話の先頭 = 挨拶ボット）
+    state.snapshots.push({
+      snapshotId: uid(),
+      turnIndex: 0,
+      ts: now(),
+      profile: structuredCloneSafe(state.profile),
+      userMessageIndex: null,
+      endMessageIndex: state.messages.length - 1,
+      delta: { reason: "init" },
+    });
     state.settings.activeSnapshotId = "latest";
     persist(state);
     render(state);
@@ -946,7 +977,18 @@ function wireUI(state) {
 
   btnClearChat.addEventListener("click", () => {
     state.messages = [];
+    state.profile = { ...DEFAULT_PROFILE, updatedAt: now() };
+    state.snapshots = [];
     ensureFirstBotGreeting(state);
+    state.snapshots.push({
+      snapshotId: uid(),
+      turnIndex: 0,
+      ts: now(),
+      profile: structuredCloneSafe(state.profile),
+      userMessageIndex: null,
+      endMessageIndex: state.messages.length - 1,
+      delta: { reason: "init" },
+    });
     state.settings.activeSnapshotId = "latest";
     persist(state);
     render(state);
@@ -1023,13 +1065,31 @@ function wireUI(state) {
     const text = sanitizeText(promptInput.value).trim();
     if (!text) return;
 
+    // 日付/履歴で「過去の自分」を選んでいる場合、その時点まで巻き戻してから続けて話す
+    const activeKey = state.settings.activeSnapshotId || "latest";
+    if (activeKey !== "latest") {
+      const snapIdx = (state.snapshots || []).findIndex((s) => s?.snapshotId === activeKey);
+      if (snapIdx >= 0) {
+        const snap = state.snapshots[snapIdx];
+        if (snap && typeof snap.endMessageIndex === "number" && snap.endMessageIndex >= 0) {
+          state.messages = state.messages.slice(0, snap.endMessageIndex + 1);
+        }
+        // 会話の先（未来）に相当するスナップショットは切り捨て
+        state.snapshots = state.snapshots.slice(0, snapIdx + 1);
+        if (snap?.profile) state.profile = structuredCloneSafe(snap.profile);
+      }
+      // この時点の自分で続きを話す（以後の履歴と整合させるため）
+      state.settings.activeSnapshotId = activeKey;
+    }
+
     const messageId = uid();
     state.messages.push({ id: messageId, role: "user", text, ts: now() });
     // 毎チャット（ユーザー入力）ごとに「自分プロファイル」を更新してスナップショット保存
     const before = structuredCloneSafe(state.profile);
     state.profile = updateProfileFromUserText(state.profile, text);
     const delta = { reason: "user_message", beforeUpdatedAt: before?.updatedAt ?? null, afterUpdatedAt: state.profile?.updatedAt ?? null };
-    createSnapshot(state, messageId, delta);
+    const createdSnap = createSnapshot(state, messageId, delta);
+    const createdSnapId = createdSnap?.snapshotId;
     promptInput.value = "";
     persist(state);
     render(state);
@@ -1038,6 +1098,11 @@ function wireUI(state) {
     setBusy(true);
     const typingId = uid();
     state.messages.push({ id: typingId, role: "bot", text: "", ts: now(), typing: true });
+    // 選択中スナップショットの表示範囲に typing を含める（返答確定まで隠れないように）
+    if (createdSnapId) {
+      const sIdx = (state.snapshots || []).findIndex((s) => s?.snapshotId === createdSnapId);
+      if (sIdx >= 0) state.snapshots[sIdx].endMessageIndex = state.messages.length - 1;
+    }
     persist(state);
     render(state);
     renderSnapshotSidebar();
@@ -1046,6 +1111,11 @@ function wireUI(state) {
       const idx = state.messages.findIndex((m) => m?.id === typingId);
       if (idx >= 0) {
         state.messages[idx] = { ...state.messages[idx], typing: false, text: sanitizeText(reply), ts: now() };
+        // createdSnap の「会話末尾index」を bot 返答確定位置へ更新
+        if (createdSnapId) {
+          const sIdx = (state.snapshots || []).findIndex((s) => s?.snapshotId === createdSnapId);
+          if (sIdx >= 0) state.snapshots[sIdx].endMessageIndex = idx;
+        }
       } else {
         state.messages.push({ id: uid(), role: "bot", text: sanitizeText(reply), ts: now() });
       }
@@ -1058,6 +1128,10 @@ function wireUI(state) {
         `エラー: ${err?.message || String(err)}\n\n（まずは設定で「疑似応答」にすると確実に動きます）`;
       if (idx >= 0) {
         state.messages[idx] = { ...state.messages[idx], typing: false, text: msg, ts: now() };
+        if (createdSnapId) {
+          const sIdx = (state.snapshots || []).findIndex((s) => s?.snapshotId === createdSnapId);
+          if (sIdx >= 0) state.snapshots[sIdx].endMessageIndex = idx;
+        }
       } else {
         state.messages.push({ id: uid(), role: "bot", text: msg, ts: now() });
       }

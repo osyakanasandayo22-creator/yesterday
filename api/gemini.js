@@ -122,8 +122,8 @@ export default async function handler(req, res) {
 
     const generationConfig = {
       temperature: 0.7,
-      // 512だと返答が途中で途切れやすいので余裕を持たせる
-      maxOutputTokens: 1024,
+      // 出力が途中で切れやすいので余裕を持たせる
+      maxOutputTokens: 2048,
     };
 
     // モデル名は -preview などが付く実名を使う（例: gemini-3-flash-preview）
@@ -136,7 +136,18 @@ export default async function handler(req, res) {
       ? [requestedModel, DEFAULT_PRIMARY, DEFAULT_LITE, FALLBACK_PRIMARY, FALLBACK_LITE].filter(Boolean)
       : [DEFAULT_PRIMARY, DEFAULT_LITE, FALLBACK_PRIMARY, FALLBACK_LITE];
 
-    async function attempt(model) {
+    function extractTextAndFinish(data) {
+      const text =
+        data?.candidates?.[0]?.content?.parts
+          ?.map((p) => p?.text)
+          .filter(Boolean)
+          .join("") ?? "";
+      const finishReason = data?.candidates?.[0]?.finishReason || null;
+      return { text, finishReason };
+    }
+
+    async function attempt(model, contentsOverride) {
+      const targetContents = Array.isArray(contentsOverride) ? contentsOverride : contents;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
       const upstream = await fetch(url, {
         method: "POST",
@@ -144,7 +155,7 @@ export default async function handler(req, res) {
           "Content-Type": "application/json",
           "x-goog-api-key": apiKey,
         },
-        body: JSON.stringify({ contents, generationConfig }),
+        body: JSON.stringify({ contents: targetContents, generationConfig }),
       });
 
       const ct = upstream.headers.get("content-type") || "";
@@ -193,16 +204,58 @@ export default async function handler(req, res) {
       }
 
       const data = r.json ?? (r.raw ? JSON.parse(r.raw) : null);
-      const text =
-        data?.candidates?.[0]?.content?.parts
-          ?.map((p) => p?.text)
-          .filter(Boolean)
-          .join("") ?? "";
-      const finishReason = data?.candidates?.[0]?.finishReason || null;
+      const { text, finishReason } = extractTextAndFinish(data);
 
       if (!text) {
         lastError = { model, status: 200, statusText: "OK", contentType: r.contentType, raw: r.raw, json: r.json };
         continue;
+      }
+
+      // MAX_TOKENS等で途中打ち切りなら、「続き」をもう一度だけ生成して結合する
+      const truncated = finishReason ? /(MAX_TOKENS|max_tokens|length|LENGTH)/i.test(String(finishReason)) : false;
+      if (truncated) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+        const continuationPrompt = "続けて。さっきの続きからそのまま出して。";
+        const contents2 = [
+          ...contents,
+          { role: "model", parts: [{ text }] },
+          { role: "user", parts: [{ text: continuationPrompt }] },
+        ];
+        const upstream2 = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey,
+          },
+          body: JSON.stringify({
+            contents: contents2,
+            generationConfig: {
+              ...generationConfig,
+              // 続きは長すぎるとまた切れるので、少し控えめに
+              maxOutputTokens: 1024,
+            },
+          }),
+        });
+        const ct2 = upstream2.headers.get("content-type") || "";
+        const raw2 = await upstream2.text().catch(() => "");
+        let parsed2 = null;
+        if (ct2.includes("application/json") && raw2) {
+          try {
+            parsed2 = JSON.parse(raw2);
+          } catch {
+            parsed2 = null;
+          }
+        }
+        if (upstream2.ok) {
+          const { text: text2, finishReason: finishReason2 } = extractTextAndFinish(parsed2);
+          if (text2) {
+            return res.status(200).json({
+              text: text + text2,
+              modelUsed: model,
+              finishReason: finishReason2 || finishReason,
+            });
+          }
+        }
       }
 
       return res.status(200).json({ text, modelUsed: model, finishReason });
